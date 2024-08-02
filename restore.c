@@ -100,6 +100,7 @@ struct ctx {
 	int progress;
 	int stop_on_errors;
 	int dryrun;
+	const char *startat;
 	struct localindex *new_index;
 };
 
@@ -115,6 +116,21 @@ struct level {
 	mode_t mode;
 	struct level *parent, *child;
 };
+
+static int match(const struct ctx *ctx, const struct level *lev)
+{
+	if (!ctx->startat) return 1;
+	const char *p = ctx->startat;
+	for (; lev->parent; lev=lev->parent);
+	lev = lev->child;
+	for (; lev; lev=lev->child) {
+		if (strncmp(p, lev->name, strlen(lev->name))) return 0;
+		p += strlen(lev->name);
+		if (*p=='/') p++;
+		if (!*p) return 1;
+	}
+	return 1;
+}
 
 static int fprint_pathname(FILE *f, const struct level *lev)
 {
@@ -229,12 +245,17 @@ static int do_restore(const char *dest, const unsigned char *roothash, struct ct
 			new->fd = -1;
 			if (cur->pos+HASHLEN >= cur->dlen) goto fail;
 			new->hash = cur->data+cur->pos;
-			new->data = load_and_decrypt_hash(&new->dlen, new->hash, &ctx->rbc, &ctx->dc);
 			cur->pos += HASHLEN;
 			size_t namelen = strnlen((char *)cur->data+cur->pos, cur->dlen-cur->pos);
 			if (cur->data[cur->pos+namelen]) goto fail;
 			new->name = (char *)cur->data + cur->pos;
 			cur->pos += namelen + 1;
+			if (!match(ctx, new)) {
+				cur->child = 0;
+				free(new);
+				continue;
+			}
+			new->data = load_and_decrypt_hash(&new->dlen, new->hash, &ctx->rbc, &ctx->dc);
 			if (!new->data) {
 				error_msg(cur, "loading inode file");
 				ctx->errorcnt++;
@@ -377,13 +398,17 @@ int restore_main(int argc, char **argv, char *progname)
 	const char *keyfile = 0;
 	const char *index_file = 0;
 	const char *readback_command = 0;
+	const char *startat = 0;
 	int dryrun = 0;
 	int verbose = 0, progress = 0, stop_on_errors = 0;
 	struct localindex new_index;
 
-	while ((c=getopt(argc, argv, "r:d:k:vPSi:nc:")) >= 0) switch (c) {
+	while ((c=getopt(argc, argv, "r:d:k:vPSi:nc:s:")) >= 0) switch (c) {
 	case 'c':
 		readback_command = optarg;
+		break;
+	case 's':
+		startat = optarg;
 		break;
 	case 'r':
 		// FIXME: not used for now
@@ -488,6 +513,7 @@ int restore_main(int argc, char **argv, char *progname)
 		.dc.ephemeral_map = map_create(),
 		.new_index = index_file ? &new_index : 0,
 		.dryrun = dryrun,
+		.startat = startat,
 	};
 	if (readback_command) {
 		readback_init_command(&ctx.rbc, readback_command);
