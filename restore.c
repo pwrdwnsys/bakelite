@@ -376,11 +376,15 @@ int restore_main(int argc, char **argv, char *progname)
 	const char *destdir = 0;
 	const char *keyfile = 0;
 	const char *index_file = 0;
+	const char *readback_command = 0;
 	int dryrun = 0;
 	int verbose = 0, progress = 0, stop_on_errors = 0;
 	struct localindex new_index;
 
-	while ((c=getopt(argc, argv, "r:d:k:vPSi:n")) >= 0) switch (c) {
+	while ((c=getopt(argc, argv, "r:d:k:vPSi:nc:")) >= 0) switch (c) {
+	case 'c':
+		readback_command = optarg;
+		break;
 	case 'r':
 		// FIXME: not used for now
 		roothash_string = optarg;
@@ -485,6 +489,9 @@ int restore_main(int argc, char **argv, char *progname)
 		.new_index = index_file ? &new_index : 0,
 		.dryrun = dryrun,
 	};
+	if (readback_command) {
+		readback_init_command(&ctx.rbc, readback_command);
+	}
 	unsigned char roothash[HASHLEN];
 	if (strlen(roothash_string) != 2*HASHLEN) {
 		fprintf(stderr, "invalid hash %s\n", roothash_string);

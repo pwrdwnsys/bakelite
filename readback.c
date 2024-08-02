@@ -6,6 +6,7 @@
 #include "readback.h"
 #include "store.h"
 #include "binhex.h"
+#include "pipe.h"
 
 static FILE *get_from_objdir(struct readback_context *rbc, const unsigned char *hash, size_t *size)
 {
@@ -67,4 +68,11 @@ FILE *readback_get_by_hash(struct readback_context *rbc, const unsigned char *ha
 void readback_close(FILE *f)
 {
 	fclose(f);
+}
+
+int readback_init_command(struct readback_context *rbc, const char *cmd)
+{
+	rbc->objdir_fd = -1;
+	rbc->pipe_pid = bidir_pipe_cmd(rbc->pipe_fd, cmd);
+	return 0;
 }
