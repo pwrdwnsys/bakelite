@@ -5,6 +5,7 @@
 
 struct readback_context {
 	int objdir_fd;
+	int pipe_fd[2];
 };
 
 FILE *readback_get_by_hash(struct readback_context *, const unsigned char *, size_t *);
