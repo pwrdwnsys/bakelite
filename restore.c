@@ -34,6 +34,7 @@ void *load_and_decrypt_hash(size_t *size, const unsigned char *hash, struct read
 
 	size_t st_size;
 	FILE *f = readback_get_by_hash(rbc, hash, &st_size);
+	if (!f) return 0;
 	if (st_size < 40) {
 		while (st_size--) fgetc(f);
 		readback_close(f);

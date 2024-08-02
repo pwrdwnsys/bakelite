@@ -38,10 +38,12 @@ int serveback_main(int argc, char **argv)
 		unsigned char hash[HASHLEN];
 		if (!hex2bin(hash, buf, HASHLEN)) {
 			puts("?");
+			fflush(stdout);
 			continue;
 		}
 		if (send_hash(stdout, hash)) {
 			puts("?");
+			fflush(stdout);
 		}
 	}
 	return 0;
