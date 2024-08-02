@@ -22,14 +22,22 @@ struct decrypt_context {
 	struct map *ephemeral_map;
 };
 
+struct readback_context {
+	int objdir_fd;
+};
+
 static int dupe(int fd)
 {
 	return fcntl(fd, F_DUPFD_CLOEXEC, 0);
 }
 
-void *load_and_decrypt_file(size_t *size, unsigned char *computed_hash, int dfd, const char *name, struct decrypt_context *dc)
+void *load_and_decrypt_hash(size_t *size, const unsigned char *hash, struct readback_context *rbc, struct decrypt_context *dc)
 {
-	int fd = openat(dfd, name, O_RDONLY|O_CLOEXEC);
+	char name[BLOBNAME_SIZE];
+	gen_blob_name(name, hash);
+	unsigned char computed_hash[HASHLEN];
+
+	int fd = openat(rbc->objdir_fd, name, O_RDONLY|O_CLOEXEC);
 	if (fd<0) return 0;
 	struct stat st;
 	if (fstat(fd, &st) || st.st_size > PTRDIFF_MAX) {
@@ -68,24 +76,13 @@ void *load_and_decrypt_file(size_t *size, unsigned char *computed_hash, int dfd,
 	fclose(f);
 	sha3_update(&h, buf, len);
 	sha3_final(computed_hash, &h);
+	if (memcmp(hash, computed_hash, HASHLEN)) {
+		fprintf(stderr, "%s hash mismatch\n", name);
+	}
 
 	chacha20_buf(buf, len, key, nonce);
 
 	*size = len;
-	return buf;
-}
-
-void *load_and_decrypt_hash(size_t *size, const unsigned char *hash, int objdir, struct decrypt_context *dc)
-{
-	char name[BLOBNAME_SIZE];
-	gen_blob_name(name, hash);
-	unsigned char computed_hash[HASHLEN];
-	void *buf = load_and_decrypt_file(size, computed_hash, objdir, name, dc);
-	if (buf) {
-		if (memcmp(hash, computed_hash, HASHLEN)) {
-			fprintf(stderr, "%s hash mismatch\n", name);
-		}
-	}
 	return buf;
 }
 
@@ -101,11 +98,11 @@ static struct timespec strtots(const char *s0)
 struct ctx {
 	//struct crypto_context cc;
 	struct decrypt_context dc;
+	struct readback_context rbc;
 	long long errorcnt;
 	int verbose;
 	int progress;
 	int stop_on_errors;
-	int objdir;
 	int dryrun;
 	struct localindex *new_index;
 };
@@ -158,7 +155,7 @@ static int do_restore(const char *dest, const unsigned char *roothash, struct ct
 	struct map *hardlink_map = map_create();
 	cur->name = dest;
 	cur->hash = roothash;
-	cur->data = load_and_decrypt_hash(&cur->dlen, roothash, ctx->objdir, &ctx->dc);
+	cur->data = load_and_decrypt_hash(&cur->dlen, roothash, &ctx->rbc, &ctx->dc);
 	if (!cur->data) goto fail;
 	for (;;) {
 		int got_blocks = 0;
@@ -236,7 +233,7 @@ static int do_restore(const char *dest, const unsigned char *roothash, struct ct
 			new->fd = -1;
 			if (cur->pos+HASHLEN >= cur->dlen) goto fail;
 			new->hash = cur->data+cur->pos;
-			new->data = load_and_decrypt_hash(&new->dlen, new->hash, ctx->objdir, &ctx->dc);
+			new->data = load_and_decrypt_hash(&new->dlen, new->hash, &ctx->rbc, &ctx->dc);
 			cur->pos += HASHLEN;
 			size_t namelen = strnlen((char *)cur->data+cur->pos, cur->dlen-cur->pos);
 			if (cur->data[cur->pos+namelen]) goto fail;
@@ -287,7 +284,7 @@ static int do_restore(const char *dest, const unsigned char *roothash, struct ct
 				for (uint64_t i=0; cur->pos+HASHLEN <= cur->dlen; i++, cur->pos+=HASHLEN) {
 					const unsigned char *bhash = cur->data+cur->pos;
 					size_t blen;
-					unsigned char *block = load_and_decrypt_hash(&blen, bhash, ctx->objdir, &ctx->dc);
+					unsigned char *block = load_and_decrypt_hash(&blen, bhash, &ctx->rbc, &ctx->dc);
 					if (!block || blen < 4) break;
 					fwrite(block+4, 1, blen-4, f);
 					if (ctx->new_index) {
@@ -486,7 +483,7 @@ int restore_main(int argc, char **argv, char *progname)
 		.progress = progress,
 		.verbose = verbose,
 		.stop_on_errors = stop_on_errors,
-		.objdir = d,
+		.rbc.objdir_fd = d,
 		.dc.rcpt_secret = rcpt_secret,
 		.dc.ephemeral_map = map_create(),
 		.new_index = index_file ? &new_index : 0,
