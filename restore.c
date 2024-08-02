@@ -16,14 +16,11 @@
 #include "binhex.h"
 #include "store.h"
 #include "localindex.h"
+#include "readback.h"
 
 struct decrypt_context {
 	const unsigned char *rcpt_secret;
 	struct map *ephemeral_map;
-};
-
-struct readback_context {
-	int objdir_fd;
 };
 
 static int dupe(int fd)
@@ -33,19 +30,16 @@ static int dupe(int fd)
 
 void *load_and_decrypt_hash(size_t *size, const unsigned char *hash, struct readback_context *rbc, struct decrypt_context *dc)
 {
-	char name[BLOBNAME_SIZE];
-	gen_blob_name(name, hash);
 	unsigned char computed_hash[HASHLEN];
 
-	int fd = openat(rbc->objdir_fd, name, O_RDONLY|O_CLOEXEC);
-	if (fd<0) return 0;
-	struct stat st;
-	if (fstat(fd, &st) || st.st_size > PTRDIFF_MAX) {
-		close(fd);
+	size_t st_size;
+	FILE *f = readback_get_by_hash(rbc, hash, &st_size);
+	if (st_size < 40) {
+		while (st_size--) fgetc(f);
+		readback_close(f);
 		return 0;
 	}
-	unsigned char *buf = malloc(st.st_size+64);
-	FILE *f = fdopen(fd, "rb");
+	unsigned char *buf = malloc(st_size+64);
 
 	sha3_ctx_t h;
 	sha3_init(&h, HASHLEN);
@@ -71,13 +65,15 @@ void *load_and_decrypt_hash(size_t *size, const unsigned char *hash, struct read
 		map_set(dc->ephemeral_map, ephemeral_hex, key);
 	}
 
-	size_t len = st.st_size-40;
+	size_t len = st_size-40;
 	fread(buf, 1, len, f);
 	fclose(f);
 	sha3_update(&h, buf, len);
 	sha3_final(computed_hash, &h);
 	if (memcmp(hash, computed_hash, HASHLEN)) {
-		fprintf(stderr, "%s hash mismatch\n", name);
+		char hashstr[2*HASHLEN+1];
+		bin2hex(hashstr, hash, HASHLEN);
+		fprintf(stderr, "%s hash mismatch\n", hashstr);
 	}
 
 	chacha20_buf(buf, len, key, nonce);
